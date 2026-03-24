@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>あつまれどうぶつの森~ウェブ版~※非公式</title>
+<style>
+  body { margin:0; overflow:hidden; font-family:sans-serif; }
+  canvas { display:block; }
+  #ui { position:absolute; bottom:20px; left:50%; transform:translateX(-50%);
+        width:60%; background:rgba(0,0,0,0.6); color:white; padding:10px; border-radius:10px; font-size:18px; opacity:1; transition:opacity 0.5s;}
+  #time { position:absolute; top:20px; right:20px; background:rgba(0,0,0,0.5); color:#fff; padding:5px 10px; border-radius:8px;}
+  #inventory { position:absolute; top:20px; left:20px; background:rgba(0,0,0,0.5); color:#fff; padding:5px 10px; border-radius:8px;}
+</style>
+</head>
+<body>
+<div id="ui">こんにちは！島へようこそ！</div>
+<div id="time"></div>
+<div id="inventory">持ち物: なし</div>
+<input type="file" id="loadFile" accept=".json">
+<button style="position:absolute; top:60px; right:20px; z-index:10;" onclick="saveGame()">セーブ</button>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.158.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+// --- Three.js 初期設定 ---
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+camera.position.set(0,5,10);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+const ambient = new THREE.AmbientLight(0xffffff,0.6);
+scene.add(ambient);
+const directional = new THREE.DirectionalLight(0xffffff,0.8);
+directional.position.set(10,10,5);
+scene.add(directional);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0,0.5,0);
+controls.update();
+
+// --- 地面 ---
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(50,50), new THREE.MeshStandardMaterial({color:0x228B22}));
+ground.rotation.x = -Math.PI/2;
+scene.add(ground);
+
+// --- 水辺・砂浜・橋 ---
+const water = new THREE.Mesh(new THREE.PlaneGeometry(50,50), new THREE.MeshStandardMaterial({color:0x1ca3ec, transparent:true, opacity:0.8}));
+water.rotation.x=-Math.PI/2; water.position.y=0; scene.add(water);
+
+const sand = new THREE.Mesh(new THREE.PlaneGeometry(20,10), new THREE.MeshStandardMaterial({color:0xffe4b5}));
+sand.rotation.x=-Math.PI/2; sand.position.set(0,0,10); scene.add(sand);
+
+const bridge = new THREE.Mesh(new THREE.BoxGeometry(1,0.2,5), new THREE.MeshStandardMaterial({color:0x8B4513}));
+bridge.position.set(0,0.1,5); scene.add(bridge);
+
+// --- プレイヤー ---
+const playerGeo = new THREE.BoxGeometry(0.5,1,0.5);
+const playerMat = new THREE.MeshStandardMaterial({color:0xffcc00});
+const player = new THREE.Mesh(playerGeo, playerMat);
+player.position.set(0,0.5,0);
+player.mood = "楽しい";
+scene.add(player);
+
+// --- 花・果物・家具 ---
+function createFlower(x,z,color=0xff0000){
+  const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.5), new THREE.MeshStandardMaterial({color:0x228B22}));
+  stem.position.set(x,0.25,z);
+  const bloom = new THREE.Mesh(new THREE.SphereGeometry(0.15,8,8), new THREE.MeshStandardMaterial({color}));
+  bloom.position.set(x,0.55,z);
+  scene.add(stem,bloom);
+}
+createFlower(3,2,0xff69b4);
+createFlower(-2,4,0xffff00);
+
+function addFruitToTree(x,z,color=0xff4500){
+  const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.1,8,8), new THREE.MeshStandardMaterial({color}));
+  fruit.position.set(x,2.2,z);
+  scene.add(fruit);
+}
+
+function createFurniture(x,z){
+  const table = new THREE.Mesh(new THREE.BoxGeometry(0.5,0.3,0.5), new THREE.MeshStandardMaterial({color:0x8B4513}));
+  table.position.set(x,0.15,z);
+  scene.add(table);
+}
+createFurniture(1,1);
+
+// --- NPC生成 ---
+const npcList=[];
+const npcNames = {
+  元気:["ぴよん","ポコ","リリィ","モコ"],
+  のんびり:["もっち","ふわり","ころね","ララ"],
+  ツンデレ:["つむぎ","ツキ","リリカ","クレア"],
+  おちゃめ:["ぴかり","ころん","ココ","ミミ"],
+  商人系:["リゼル","タヌオ","タネキ"],
+  キザ系:["セルジュ","ルイ"]
+};
+
+function generateNPC(x,z){
+  const personalities = Object.keys(npcNames);
+  const personality = personalities[Math.floor(Math.random()*personalities.length)];
+  const nameList = npcNames[personality];
+  const name = nameList[Math.floor(Math.random()*nameList.length)];
+  const dialog = generateDialogExtended(personality);
+  const geometry = new THREE.SphereGeometry(0.3,16,16);
+  const material = new THREE.MeshStandardMaterial({color:0xffcc00});
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(x,0.3,z);
+  scene.add(mesh);
+  const npc = {name, personality, dialog, mesh};
+  npcList.push(npc);
+  return npc;
+}
+
+function generateDialogExtended(personality){
+  switch(personality){
+    case "元気": return ["おはよう！","遊ぼうよ！","元気いっぱい！"];
+    case "のんびり": return ["...","のんびりしよう","ゆったり時間がいいね"];
+    case "ツンデレ": return ["別に…あんたのためじゃないからね！","ちょっと手伝ってやるわよ"];
+    case "おちゃめ": return ["いたずら大好き！","ふふふ…","びっくりさせちゃうぞ！"];
+    case "商人系": return ["いらっしゃい！","何か買うかい？","お金が大事さ"];
+    case "キザ系": return ["ボクの魅力、見てくれよ","お洒落は命だ","今日は誰より輝くぜ"];
+  }
+}
+
+// サンプルNPC配置
+generateNPC(2,3);
+generateNPC(-2,1);
+generateNPC(4,-3);
+generateNPC(-4,-2);
+generateNPC(0,5);
+generateNPC(3,-2);
+
+// --- UI / 字幕 ---
+function showSubtitle(text,duration=3000){
+  const ui = document.getElementById('ui');
+  ui.textContent = text;
+  ui.style.opacity = 1;
+  setTimeout(()=>{ui.style.opacity=0;}, duration);
+}
+
+function talkToNPC(npc){
+  const line = npc.dialog[Math.floor(Math.random()*npc.dialog.length)];
+  showSubtitle(`${npc.name} (${npc.personality})「${line}」`,4000);
+}
+
+// --- プレイヤー操作 ---
+const keyState = {};
+document.addEventListener('keydown',e=>keyState[e.key.toLowerCase()]=true);
+document.addEventListener('keyup',e=>keyState[e.key.toLowerCase()]=false);
+function updatePlayer(){
+  const speed = 0.05;
+  if(keyState['w']) player.position.z -= speed;
+  if(keyState['s']) player.position.z += speed;
+  if(keyState['a']) player.position.x -= speed;
+  if(keyState['d']) player.position.x += speed;
+}
+
+// --- NPC会話（Eキー） ---
+document.addEventListener('keydown', e=>{
+  if(e.key==='e'){
+    const nearbyNPC = npcList.find(npc=>{
+      const dx = npc.mesh.position.x - player.position.x;
+      const dz = npc.mesh.position.z - player.position.z;
+      return Math.sqrt(dx*dx + dz*dz)<2;
+    });
+    if(nearbyNPC) talkToNPC(nearbyNPC);
+  }
+});
+
+// --- インベントリ ---
+let inventory=[];
+function getInventoryItems(){ return inventory; }
+function setInventoryItems(items){ inventory = items; document.getElementById('inventory').textContent=`持ち物: ${inventory.join(",")||"なし"}`; }
+
+// --- セーブ/ロード ---
+function saveGame(){
+  const gameState = {
+    player:{position:{x:player.position.x,y:player.position.y,z:player.position.z},inventory,mood:player.mood},
+    npcs:npcList.map(npc=>({name:npc.name,personality:npc.personality,dialog:npc.dialog,position:{x:npc.mesh.position.x,y:npc.mesh.position.y-0.3,z:npc.mesh.position.z}}))
+  };
+  const dataStr="data:text/json;charset=utf-8,"+encodeURIComponent(JSON.stringify(gameState));
+  const dlAnchor=document.createElement('a');
+  dlAnchor.href=dataStr;
+  dlAnchor.download="atsumori_save.json";
+  dlAnchor.click();
+}
+
+document.getElementById('loadFile').addEventListener('change',e=>{
+  const reader = new FileReader();
+  reader.onload=function(ev){
+    const data=JSON.parse(ev.target.result);
+    player.position.set(data.player.position.x,data.player.position.y,data.player.position.z);
+    inventory=data.player.inventory; setInventoryItems(inventory);
+    player.mood=data.player.mood;
+    npcList.forEach(npc=>scene.remove(npc.mesh));
+    npcList.length=0;
+    data.npcs.forEach(npcData=>{
+      const geometry=new THREE.SphereGeometry(0.3,16,16);
+      const material=new THREE.MeshStandardMaterial({color:0xffcc00});
+      const mesh=new THREE.Mesh(geometry,material);
+      mesh.position.set(npcData.position.x,npcData.position.y+0.3,npcData.position.z);
+      scene.add(mesh);
+      npcList.push({name:npcData.name,personality:npcData.personality,dialog:npcData.dialog,mesh});
+    });
+  };
+  reader.readAsText(e.target.files[0]);
+});
+
+// --- 時間UI ---
+function updateTime(){ document.getElementById('time').textContent=new Date().toLocaleTimeString(); }
+setInterval(updateTime,1000);
+
+// --- NPC歩行 ---
+function updateNPCs(){
+  npcList.forEach(npc=>{
+    if(Math.random()<0.01){
+      npc.mesh.position.x += (Math.random()-0.5)*0.5;
+      npc.mesh.position.z += (Math.random()-0.5)*0.5;
+    }
+  });
+}
+
+// --- メインループ ---
+function animate(){
+  requestAnimationFrame(animate);
+  updatePlayer();
+  updateNPCs();
+  renderer.render(scene,camera);
+}
+animate();
+</script>
+</body>
+</html>
